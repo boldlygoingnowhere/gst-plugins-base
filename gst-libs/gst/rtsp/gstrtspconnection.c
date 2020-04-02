@@ -197,6 +197,8 @@ typedef struct
   glong body_len;
 } GstRTSPBuilder;
 
+static GstRTSPWatchStatusFunc watch_status_func = NULL;
+
 /* function prototypes */
 static void add_auth_header (GstRTSPConnection * conn,
     GstRTSPMessage * message);
@@ -3117,6 +3119,7 @@ struct _GstRTSPWatch
   guint max_messages;
   GCond queue_not_full;
   gboolean flushing;
+  gchar uri_suffix;             /* Allows watch status handler to identify media */
 
   GstRTSPWatchFuncs funcs;
 
@@ -3421,6 +3424,11 @@ gst_rtsp_source_dispatch_write (GPollableOutputStream * stream,
     res = write_bytes (conn->output_stream, watch->write_data,
         &watch->write_off, watch->write_size, FALSE, conn->cancellable);
 
+    //GST_WARNING ("Backlog after dispatch: bytes=%d/%d, messages=%d/%d, id=%d, ip=%s, session_id=%s",
+    //  (int)watch->messages_bytes, (int)watch->max_bytes,
+    //  (int)watch->messages->length, (int)watch->max_messages,
+    //  (int)watch->id, watch->conn->remote_ip, watch->conn->session_id);
+
     if (!IS_BACKLOG_FULL (watch))
       g_cond_signal (&watch->queue_not_full);
     g_mutex_unlock (&watch->mutex);
@@ -3553,6 +3561,7 @@ gst_rtsp_watch_new (GstRTSPConnection * conn,
   result->funcs = *funcs;
   result->user_data = user_data;
   result->notify = notify;
+  result->uri_suffix = '\0';
 
   return result;
 }
@@ -3797,6 +3806,10 @@ gst_rtsp_watch_write_data (GstRTSPWatch * watch, const guint8 * data,
         (GSourceFunc) gst_rtsp_source_dispatch_write, watch, NULL);
     g_source_add_child_source ((GSource *) watch, watch->writesrc);
   }
+  //GST_WARNING ("Backlog on write: bytes=%d/%d, messages=%d/%d, id=%d, ip=%s, session_id=%s, watch_status_func=%p",
+  //  (int)watch->messages_bytes, (int)watch->max_bytes,
+  //  (int)watch->messages->length, (int)watch->max_messages,
+  //  (int)watch->id, watch->conn->remote_ip, watch->conn->session_id, watch_status_func);
 
   if (id != NULL)
     *id = rec->id;
@@ -3807,6 +3820,11 @@ done:
 
   if (context)
     g_main_context_wakeup (context);
+
+  if (watch->messages_bytes > 0 && watch->max_bytes > 0
+      && watch_status_func != NULL)
+    watch_status_func (watch->uri_suffix, watch->messages_bytes,
+        watch->max_bytes);
 
   return res;
 
@@ -3825,6 +3843,9 @@ too_much_backlog:
         watch->messages_bytes, watch->max_messages, watch->messages->length);
     g_mutex_unlock (&watch->mutex);
     g_free ((gpointer) data);
+    if (watch->max_bytes > 0 && watch_status_func != NULL)
+      watch_status_func (watch->uri_suffix, watch->messages_bytes,
+          watch->max_bytes);
     return GST_RTSP_ENOMEM;
   }
 }
@@ -3952,4 +3973,24 @@ gst_rtsp_watch_set_flushing (GstRTSPWatch * watch, gboolean flushing)
     g_queue_clear (watch->messages);
   }
   g_mutex_unlock (&watch->mutex);
+}
+
+void
+gst_rtsp_watch_set_uri_suffix (GstRTSPWatch * watch, gchar uri_suffix)
+{
+  g_return_if_fail (watch != NULL);
+
+  g_mutex_lock (&watch->mutex);
+  watch->uri_suffix = uri_suffix;
+  g_mutex_unlock (&watch->mutex);
+}
+
+/* APPLICATION USE ONLY */
+void
+gst_rtsp_watch_set_status_func (GstRTSPWatchStatusFunc status_func)
+{
+  GST_WARNING ("status_func=%p", status_func);
+  g_return_if_fail (status_func != NULL);
+
+  watch_status_func = status_func;
 }

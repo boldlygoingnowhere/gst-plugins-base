@@ -223,6 +223,16 @@ GstRTSPResult      gst_rtsp_watch_wait_backlog       (GstRTSPWatch * watch,
 
 void               gst_rtsp_watch_set_flushing       (GstRTSPWatch * watch,
                                                       gboolean flushing);
+void               gst_rtsp_watch_set_uri_suffix     (GstRTSPWatch * watch,
+                                                      gchar uri_suffix);
+
+/* Callbacks to application */
+typedef void       (*GstRTSPWatchStatusFunc)         (gchar uri_suffix,
+                                                      gsize message_bytes,
+                                                      gsize max_bytes);
+
+void               gst_rtsp_watch_set_status_func    (GstRTSPWatchStatusFunc status_func);
+
 G_END_DECLS
 
 #endif /* __GST_RTSP_CONNECTION_H__ */

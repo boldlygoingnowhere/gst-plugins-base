@@ -3118,6 +3118,7 @@ struct _GstRTSPWatch
   gsize max_bytes;
   guint max_messages;
   GCond queue_not_full;
+  gsize flush_threshold;
   gboolean flushing;
   gchar uri_suffix;             /* Allows watch status handler to identify media */
 
@@ -3489,9 +3490,10 @@ gst_rtsp_source_finalize (GSource * source)
   gst_rtsp_message_unset (&watch->message);
 
   g_queue_foreach (watch->messages, (GFunc) gst_rtsp_rec_free, NULL);
+  watch->messages_bytes = 0;
+
   g_queue_free (watch->messages);
   watch->messages = NULL;
-  watch->messages_bytes = 0;
 
   g_free (watch->write_data);
   g_cond_clear (&watch->queue_not_full);
@@ -3561,7 +3563,6 @@ gst_rtsp_watch_new (GstRTSPConnection * conn,
   result->funcs = *funcs;
   result->user_data = user_data;
   result->notify = notify;
-  result->uri_suffix = '\0';
 
   return result;
 }
@@ -3750,6 +3751,41 @@ gst_rtsp_watch_write_data (GstRTSPWatch * watch, const guint8 * data,
   if (watch->flushing)
     goto flushing;
 
+  /* Check if need to flush via threshold setting */
+  if (watch->flush_threshold > 0
+      && watch->messages_bytes > watch->flush_threshold) {
+    GstRTSPRec *last_rec = NULL;
+
+    GST_WARNING ("bytes=%d, flush_threshold=%d => FLUSHING",
+        (int) watch->messages_bytes, (int) watch->flush_threshold);
+
+    /* Flush all except the last message since this may be a partial message */
+    /* that really should be sent with the preceding part */
+    do {
+      GstRTSPRec *rec;
+
+      rec = g_queue_pop_tail (watch->messages);
+      if (rec == NULL) {
+        break;
+      }
+
+      watch->messages_bytes -= rec->size;
+
+      if (last_rec == NULL)
+        last_rec = rec;
+      else
+        gst_rtsp_rec_free (rec);
+    } while (TRUE);
+
+    if (last_rec != NULL) {
+      g_queue_push_head (watch->messages, last_rec);
+      watch->messages_bytes += last_rec->size;
+    }
+
+    if (!IS_BACKLOG_FULL (watch))
+      g_cond_signal (&watch->queue_not_full);
+  }
+
   /* try to send the message synchronously first */
   if (watch->messages->length == 0 && watch->write_data == NULL) {
     res =
@@ -3824,7 +3860,7 @@ done:
   if (watch->messages_bytes > 0 && watch->max_bytes > 0
       && watch_status_func != NULL)
     watch_status_func (watch->uri_suffix, watch->messages_bytes,
-        watch->max_bytes);
+        watch->max_bytes, &watch->flush_threshold);
 
   return res;
 
@@ -3845,7 +3881,7 @@ too_much_backlog:
     g_free ((gpointer) data);
     if (watch->max_bytes > 0 && watch_status_func != NULL)
       watch_status_func (watch->uri_suffix, watch->messages_bytes,
-          watch->max_bytes);
+          watch->max_bytes, &watch->flush_threshold);
     return GST_RTSP_ENOMEM;
   }
 }
@@ -3970,6 +4006,8 @@ gst_rtsp_watch_set_flushing (GstRTSPWatch * watch, gboolean flushing)
   g_cond_signal (&watch->queue_not_full);
   if (flushing) {
     g_queue_foreach (watch->messages, (GFunc) gst_rtsp_rec_free, NULL);
+    watch->messages_bytes = 0;
+
     g_queue_clear (watch->messages);
   }
   g_mutex_unlock (&watch->mutex);

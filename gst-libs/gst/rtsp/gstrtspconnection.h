@@ -229,7 +229,8 @@ void               gst_rtsp_watch_set_uri_suffix     (GstRTSPWatch * watch,
 /* Callbacks to application */
 typedef void       (*GstRTSPWatchStatusFunc)         (gchar uri_suffix,
                                                       gsize message_bytes,
-                                                      gsize max_bytes);
+                                                      gsize max_bytes,
+                                                      gsize *flush_threshold);
 
 void               gst_rtsp_watch_set_status_func    (GstRTSPWatchStatusFunc status_func);
 

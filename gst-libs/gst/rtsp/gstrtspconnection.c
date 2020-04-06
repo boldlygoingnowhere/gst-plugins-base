@@ -3752,7 +3752,7 @@ gst_rtsp_watch_write_data (GstRTSPWatch * watch, const guint8 * data,
     goto flushing;
 
   /* Check if need to flush via threshold setting */
-  if (watch->flush_threshold > 0
+  if (watch->max_bytes > 0 && watch->flush_threshold > 0
       && watch->messages_bytes > watch->flush_threshold) {
     GstRTSPRec *last_rec = NULL;
 
@@ -3857,7 +3857,7 @@ done:
   if (context)
     g_main_context_wakeup (context);
 
-  if (watch->messages_bytes > 0 && watch->max_bytes > 0
+  if (watch->max_bytes > 0 && watch->messages_bytes > 0
       && watch_status_func != NULL)
     watch_status_func (watch->uri_suffix, watch->messages_bytes,
         watch->max_bytes, &watch->flush_threshold);
